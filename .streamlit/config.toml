@@ -1,0 +1,7 @@
+[server]
+# 初回起動時のメールアドレス入力プロンプトを出さない
+showEmailPrompt = false
+
+[browser]
+# 利用統計を送信しない
+gatherUsageStats = false
