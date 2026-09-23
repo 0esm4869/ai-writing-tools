@@ -8,7 +8,7 @@ from datetime import datetime
 import streamlit as st
 
 from core import history
-from core.gemini import APIKeyError, stream_text
+from core.gemini import APIKeyError, describe_error, stream_text
 
 
 def page_header(icon: str, title: str, description: str) -> None:
@@ -116,7 +116,7 @@ def generate(
             st.warning(str(exc))
             return None
         except Exception as exc:  # APIエラーはそのまま見せた方がデバッグしやすい
-            st.error(f"生成に失敗しました: {exc}")
+            st.error(describe_error(exc))
             return None
 
         st.session_state[state_key] = result

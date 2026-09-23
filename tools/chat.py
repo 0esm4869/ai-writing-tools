@@ -5,7 +5,7 @@ from __future__ import annotations
 import streamlit as st
 
 from core import history, prompts
-from core.gemini import APIKeyError, create_chat, stream_chat
+from core.gemini import APIKeyError, create_chat, describe_error, stream_chat
 from core.ui import page_header, stream_markdown
 
 STATE_KEY = "chat_messages"
@@ -54,7 +54,7 @@ def render() -> None:
             messages.pop()
             return
         except Exception as exc:
-            st.error(f"生成に失敗しました: {exc}")
+            st.error(describe_error(exc))
             messages.pop()
             return
 

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 
 import streamlit as st
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 
 from core.config import (
     FALLBACK_MODELS,
@@ -27,6 +28,41 @@ class MissingAPIKeyError(APIKeyError):
 
 class InvalidAPIKeyError(APIKeyError):
     pass
+
+
+# サーバー側の一時的な障害（混雑による 503 など）。時間をおけば通ることが多い。
+TRANSIENT_CODES = {500, 502, 503, 504}
+RETRY_WAITS = (2, 5, 10)  # 再試行前に待つ秒数。回数はこの長さで決まる
+
+
+def is_transient(exc: Exception) -> bool:
+    return isinstance(exc, errors.APIError) and exc.code in TRANSIENT_CODES
+
+
+def describe_error(exc: Exception) -> str:
+    """生成失敗時に画面へ出す文言。"""
+    if is_transient(exc):
+        return (
+            "Gemini のサーバーが混雑しているため、生成できませんでした"
+            f"（{len(RETRY_WAITS)}回再試行しました）。少し時間をおいてもう一度実行するか、"
+            "サイドバーで別のモデルを選んでください。"
+        )
+    return f"生成に失敗しました: {exc}"
+
+
+def _with_retry(make_stream: Callable[[], Iterator[str]]) -> Iterator[str]:
+    """一時的な障害なら待って再試行する。出力が始まった後は重複するので諦める。"""
+    for wait in (*RETRY_WAITS, None):
+        started = False
+        try:
+            for text in make_stream():
+                started = True
+                yield text
+            return
+        except Exception as exc:
+            if started or wait is None or not is_transient(exc):
+                raise
+        time.sleep(wait)
 
 
 @st.cache_resource(show_spinner=False)
@@ -112,7 +148,7 @@ def stream_text(
     settings = settings or current_settings()
     client = get_client()
 
-    def run(active: GenSettings) -> Iterator[str]:
+    def once(active: GenSettings) -> Iterator[str]:
         stream = client.models.generate_content_stream(
             model=active.model,
             contents=prompt,
@@ -122,6 +158,9 @@ def stream_text(
             text = getattr(chunk, "text", None)
             if text:
                 yield text
+
+    def run(active: GenSettings) -> Iterator[str]:
+        return _with_retry(lambda: once(active))
 
     started = False
     try:
@@ -156,10 +195,13 @@ def create_chat(system_instruction: str, history: list[dict] | None = None):
 
 
 def stream_chat(chat, message: str) -> Iterator[str]:
-    for chunk in chat.send_message_stream(message):
-        text = getattr(chunk, "text", None)
-        if text:
-            yield text
+    def once() -> Iterator[str]:
+        for chunk in chat.send_message_stream(message):
+            text = getattr(chunk, "text", None)
+            if text:
+                yield text
+
+    return _with_retry(once)
 
 
 def count_tokens(text: str) -> int | None:
